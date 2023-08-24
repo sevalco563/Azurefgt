@@ -1,0 +1,147 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "3.5.2.0",
+    "parameters": {
+        "AdminPassword": {
+            "type": "SecureString"
+        },
+        "AdminUsername": {
+            "type": "String"
+        },
+        "FortiAnalyzerAutoscaleAdminPassword": {
+            "type": "securestring"
+        },
+        "FortiAnalyzerAutoscaleAdminUsername": {
+            "type": "string"
+        },
+        "FortiAnalyzerCustomPrivateIPAddress": {
+            "type": "string"
+        },
+        "FortiAnalyzerInstanceType": {
+            "type": "String"
+        },
+        "FortiAnalyzerPublicIPAddressID": {
+            "type": "String"
+        },
+        "SubnetId": {
+            "type": "String"
+        },
+        "UniqueResourceNamePrefix": {
+            "maxLength": 18,
+            "type": "String"
+        },
+        "VmImgReferenceFaz": {
+            "type": "Object"
+        }
+    },
+    "variables": {
+        "cmdDeleteAll": "[concat('az account set -s ', subscription().subscriptionId, ';', variables('cmdDeleteFazPublicIp'), variables('cmdDeleteFazNic'), variables('cmdDeleteFazVm'))]",
+        "cmdDeleteFazNic": "[concat('az network nic delete', ' -g ', resourceGroup().name, ' -n ', variables('fazNic0Name'), ';')]",
+        "cmdDeleteFazPublicIp": "[if(variables('ifCreateNewPublicIP'), concat('az network public-ip delete', ' -g ', resourceGroup().name, ' -n ', variables('fazPubIpName'), ';'), '')]",
+        "cmdDeleteFazVm": "[concat('az vm delete -y', ' -g ', resourceGroup().name, ' -n ', variables('fazName'), ';')]",
+        "fazName": "[concat(toLower(parameters('UniqueResourceNamePrefix')),'faz001')]",
+        "fazNic0Name": "[concat(toLower(variables('fazName')),'-nic0')]",
+        "fazPubIpId": "[if(variables('ifCreateNewPublicIP'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/publicIPAddresses/', variables('fazPubIpName')), parameters('FortiAnalyzerPublicIPAddressID'))]",
+        "fazPubIpName": "[concat(toLower(variables('fazName')),'-public-ip')]",
+        "ifCreateNewPublicIP": "[empty(parameters('FortiAnalyzerPublicIPAddressID'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Network/publicIPAddresses",
+            "apiVersion": "2020-07-01",
+            "name": "[variables('fazPubIpName')]",
+            "condition": "[variables('ifCreateNewPublicIP')]",
+            "location": "[resourceGroup().location]",
+            "sku": {
+                "name": "Standard",
+                "tier": "Regional"
+            },
+            "properties": {
+                "publicIPAllocationMethod": "Static"
+            }
+        },
+        {
+            "apiVersion": "2020-07-01",
+            "type": "Microsoft.Network/networkInterfaces",
+            "name": "[variables('fazNic0Name')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "[concat(toLower(variables('fazNic0Name')), '-ipconfig')]",
+                        "properties": {
+                            "privateIPAllocationMethod": "Static",
+                            "privateIPAddress": "[parameters('FortiAnalyzerCustomPrivateIPAddress')]",
+                            "subnet": {
+                                "id": "[parameters('SubnetId')]"
+                            },
+                            "publicIPAddress": {
+                                "id": "[variables('fazPubIpId')]"
+                            }
+                        }
+                    }
+                ],
+                "enableIPForwarding": false
+            },
+            "dependsOn": ["[variables('fazPubIpName')]"]
+        },
+        {
+            "apiVersion": "2020-06-01",
+            "type": "Microsoft.Compute/virtualMachines",
+            "name": "[variables('fazName')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "osProfile": {
+                    "computerName": "[variables('fazName')]",
+                    "adminUsername": "[parameters('AdminUsername')]",
+                    "adminPassword": "[parameters('AdminPassword')]",
+                    "customData": "[base64(concat('config system admin user\nedit ', parameters('FortiAnalyzerAutoscaleAdminUsername'), '\nset password ', parameters('FortiAnalyzerAutoscaleAdminPassword'), '\nset profileid \"Super_User\"\nset adom \"all_adoms\"\nset rpc-permit read-write\nnext\nend\n'))]"
+                },
+                "hardwareProfile": {
+                    "vmSize": "[parameters('FortiAnalyzerInstanceType')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "[parameters('VmImgReferenceFaz').publisher]",
+                        "offer": "[parameters('VmImgReferenceFaz').offer]",
+                        "sku": "[parameters('VmImgReferenceFaz').sku]",
+                        "version": "[parameters('VmImgReferenceFaz').version]"
+                    },
+                    "osDisk": {
+                        "createOption": "FromImage"
+                    },
+                    "dataDisks": [
+                        {
+                            "createOption": "Empty",
+                            "diskSizeGB": 1023,
+                            "lun": 0
+                        }
+                    ]
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('fazNic0Name'))]"
+                        }
+                    ]
+                }
+            },
+            "plan": {
+                "name": "fortinet-fortianalyzer",
+                "publisher": "fortinet",
+                "product": "fortinet-fortianalyzer"
+            },
+            "dependsOn": ["[variables('fazNic0Name')]"]
+        }
+    ],
+    "outputs": {
+        "cmdDeleteAll": {
+            "type": "String",
+            "value": "[variables('cmdDeleteAll')]"
+        },
+        "fazPublicIp": {
+            "type": "String",
+            "value": "[reference(if(variables('ifCreateNewPublicIP'), resourceId('Microsoft.Network/publicIPAddresses/', variables('fazPubIpName')), parameters('FortiAnalyzerPublicIPAddressID')), '2020-07-01').IpAddress]"
+        }
+    }
+}

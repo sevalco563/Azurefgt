@@ -1,0 +1,234 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "3.5.2.0",
+    "parameters": {
+        "FunctionAppName": {
+            "type": "String"
+        },
+        "FunctionExtensionVersion": {
+            "type": "String",
+            "defaultValue": "~3"
+        },
+        "NodeJSRuntimeVersion": {
+            "type": "String",
+            "defaultValue": "~12"
+        },
+        "PackageResURL": {
+            "type": "String"
+        },
+        "ServicePlanTier": {
+            "defaultValue": "Premium (P1V2)",
+            "allowedValues": ["Premium (P1V2)", "Free (for demo only)"],
+            "type": "String"
+        },
+        "StorageAccountName": {
+            "type": "String"
+        },
+        "UniqueResourceNamePrefix": {
+            "type": "String"
+        }
+    },
+    "variables": {
+        "cmdDeleteAll": "[concat('az account set -s ', subscription().subscriptionId, ';', variables('cmdDeleteInsights'), variables('cmdDeleteSite'), variables('cmdDeleteServerFarm'))]",
+        "cmdDeleteInsights": "[if(variables('enableAzureAppInsights'), concat('az monitor app-insights component delete -g ', resourceGroup().name, ' -a ', parameters('FunctionAppName'), ';'), '')]",
+        "cmdDeleteServerFarm": "[concat('az appservice plan delete -y -g ', resourceGroup().name, ' -n ', variables('appServicePlanName'), ';')]",
+        "cmdDeleteSite": "[concat('az webapp delete -g ', resourceGroup().name, ' -n ', parameters('FunctionAppName'), ';')]",
+        "enableAzureAppInsights": "[contains(variables('functionAppInsightAvailableLocations'), resourceGroup().location)]",
+        "functionAppInsightAvailableLocations": [
+            "australiacentral",
+            "australiacentral2",
+            "australiaeast",
+            "australiaeast",
+            "australiasoutheast",
+            "brazilsouth",
+            "brazilsoutheast",
+            "canadacentral",
+            "canadaeast",
+            "centralindia",
+            "centralus",
+            "eastasia",
+            "eastus",
+            "eastus2",
+            "francecentral",
+            "francesouth",
+            "germanycentral",
+            "germanynorth",
+            "germanynortheast",
+            "germanywestcentral",
+            "japaneast",
+            "japanwest",
+            "koreacentral",
+            "koreasouth",
+            "northcentralus",
+            "northeurope",
+            "norwayeast",
+            "norwaywest",
+            "southafricanorth",
+            "southafricawest",
+            "southcentralus",
+            "southeastasia",
+            "southindia",
+            "swedencentral",
+            "swedensouth",
+            "switzerlandnorth",
+            "switzerlandwest",
+            "uaecentral",
+            "uaenorth",
+            "uksouth",
+            "ukwest",
+            "usgovarizona",
+            "usgovtexas",
+            "usgovvirginia",
+            "westcentralus",
+            "westeurope",
+            "westindia",
+            "westus",
+            "westus2",
+            "westus3"
+        ],
+        "appInsightName": "[concat(parameters('UniqueResourceNamePrefix'),'-appins001')]",
+        "appServicePlanName": "[concat(parameters('UniqueResourceNamePrefix'),'-appserplan001')]",
+        "servicePlanTierPresets": {
+            "Free (for demo only)": {
+                "sku": "Free",
+                "skucode": "F1",
+                "workerSize": "0",
+                "workerSizeId": "0",
+                "numberOfWorkers": "1",
+                "reserved": false
+            },
+            "Premium (P1V2)": {
+                "sku": "PremiumV2",
+                "skucode": "P1v2",
+                "workerSize": "3",
+                "workerSizeId": "3",
+                "numberOfWorkers": "1",
+                "reserved": false
+            }
+        },
+        "storageAccountId": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Storage/storageAccounts/', parameters('StorageAccountName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/serverfarms",
+            "apiVersion": "2018-02-01",
+            "name": "[variables('appServicePlanName')]",
+            "location": "[resourceGroup().location]",
+            "sku": {
+                "Name": "[variables('servicePlanTierPresets')[parameters('ServicePlanTier')].skucode]"
+            },
+            "properties": {
+                "name": "[variables('appServicePlanName')]",
+                "workerSize": "[variables('servicePlanTierPresets')[parameters('ServicePlanTier')].workerSize]",
+                "numberOfWorkers": "[variables('servicePlanTierPresets')[parameters('ServicePlanTier')].numberOfWorkers]",
+                "reserved": "[variables('servicePlanTierPresets')[parameters('ServicePlanTier')].reserved]"
+            }
+        },
+        {
+            "type": "Microsoft.Web/sites",
+            "apiVersion": "2018-11-01",
+            "name": "[parameters('FunctionAppName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "functionapp",
+            "dependsOn": ["[variables('appServicePlanName')]"],
+            "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                "siteConfig": {
+                    "appSettings": [
+                        {
+                            "name": "AzureWebJobsSecretStorageType",
+                            "value": "Blob"
+                        },
+                        {
+                            "name": "AzureWebJobsStorage",
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', parameters('StorageAccountName'), ';AccountKey=', listKeys(variables('storageAccountId'), '2019-04-01').keys[0].value)]"
+                        },
+                        {
+                            "name": "[if(variables('enableAzureAppInsights'), 'APPINSIGHTS_INSTRUMENTATIONKEY', 'DEPLOYED_APPINSIGHTS')]",
+                            "value": "[if(variables('enableAzureAppInsights'), reference(resourceId('Microsoft.Insights/components/', variables('appInsightName')), '2018-05-01-preview').InstrumentationKey, 'false')]"
+                        },
+                        {
+                            "name": "FUNCTIONS_EXTENSION_VERSION",
+                            "value": "[parameters('FunctionExtensionVersion')]"
+                        },
+                        {
+                            "name": "FUNCTIONS_WORKER_RUNTIME",
+                            "value": "node"
+                        },
+                        {
+                            "name": "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING",
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', parameters('StorageAccountName'), ';AccountKey=', listKeys(variables('storageAccountId'), '2019-04-01').keys[0].value)]"
+                        },
+                        {
+                            "name": "WEBSITE_CONTENTSHARE",
+                            "value": "[toLower(parameters('FunctionAppName'))]"
+                        },
+                        {
+                            "name": "WEBSITE_NODE_DEFAULT_VERSION",
+                            "value": "[parameters('NodeJSRuntimeVersion')]"
+                        },
+                        {
+                            "name": "WEBSITE_RUN_FROM_PACKAGE",
+                            "value": "[parameters('PackageResURL')]"
+                        }
+                    ]
+                },
+                "alwaysOn": true
+            }
+        },
+        {
+            "type": "Microsoft.Insights/components",
+            "apiVersion": "2018-05-01-preview",
+            "name": "[variables('appInsightName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "web",
+            "properties": {
+                "Application_Type": "web",
+                "ApplicationId": "[parameters('FunctionAppName')]"
+            },
+            "condition": "[variables('enableAzureAppInsights')]"
+        }
+    ],
+    "outputs": {
+        "appInsightName": {
+            "type": "String",
+            "value": "[if(variables('enableAzureAppInsights'), variables('appInsightName'), '')]"
+        },
+        "appServicePlanName": {
+            "type": "String",
+            "value": "[variables('appServicePlanName')]"
+        },
+        "cmdDeleteAll": {
+            "type": "String",
+            "value": "[variables('cmdDeleteAll')]"
+        },
+        "enableAzureAppInsights": {
+            "type": "String",
+            "value": "[if(variables('enableAzureAppInsights'), 'true', 'false')]"
+        },
+        "functionAppId": {
+            "type": "String",
+            "value": "[resourceId('Microsoft.Web/sites', parameters('FunctionAppName'))]"
+        },
+        "functionAppName": {
+            "type": "String",
+            "value": "[parameters('FunctionAppName')]"
+        },
+        "functionAppPossibleOutboundIpAddresses": {
+            "type": "String",
+            "value": "[reference(resourceId('Microsoft.Web/sites', parameters('FunctionAppName')), '2016-08-01').possibleOutboundIpAddresses]"
+        },
+        "functionNameFazAuthHandler": {
+            "type": "String",
+            "value": "faz-auth-handler"
+        },
+        "functionNameFgtAsHandler": {
+            "type": "String",
+            "value": "fgt-as-handler"
+        },
+        "functionNameLicenseHandler": {
+            "type": "String",
+            "value": "byol-license"
+        }
+    }
+}
